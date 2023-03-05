@@ -74,12 +74,12 @@ class YahooFinancials(YahooFinanceETL):
     def _run_financial_stmt(self, statement_type, report_num, frequency, reformat):
         hist_obj = {"interval": frequency}
         report_name = self.YAHOO_FINANCIAL_TYPES[statement_type][report_num]
-        if reformat:
-            raw_data = self.get_stock_data(statement_type, report_name=report_name, hist_obj=hist_obj)
-            data = self.get_reformatted_stmt_data(raw_data, statement_type)
-        else:
-            data = self.get_stock_data(statement_type, report_name=report_name, hist_obj=hist_obj)
-        return data
+        if not reformat:
+            return self.get_stock_data(
+                statement_type, report_name=report_name, hist_obj=hist_obj
+            )
+        raw_data = self.get_stock_data(statement_type, report_name=report_name, hist_obj=hist_obj)
+        return self.get_reformatted_stmt_data(raw_data, statement_type)
 
     # Public Method for the user to get financial statement data
     def get_financial_stmts(self, frequency, statement_type, reformat=True):
@@ -90,7 +90,7 @@ class YahooFinancials(YahooFinanceETL):
             data = {}
             for stmt_type in statement_type:
                 re_data = self._run_financial_stmt(stmt_type, report_num, frequency, reformat)
-                data.update(re_data)
+                data |= re_data
         return data
 
     # Public Method for the user to get stock price data
@@ -160,34 +160,30 @@ class YahooFinancials(YahooFinanceETL):
     # Private Method for Functions needing stock_price_data
     def _stock_price_data(self, data_field):
         price_data = self.get_stock_price_data()
-        if isinstance(self.ticker, str):
-            if price_data[self.ticker] is None:
-                return None
-            return price_data[self.ticker].get(data_field)
-        else:
-            ret_obj = {}
-            for tick in self.ticker:
-                if price_data[tick] is None:
-                    ret_obj.update({tick: None})
-                else:
-                    ret_obj.update({tick: price_data[tick].get(data_field)})
-            return ret_obj
+        if not isinstance(self.ticker, str):
+            return {
+                tick: None
+                if price_data[tick] is None
+                else price_data[tick].get(data_field)
+                for tick in self.ticker
+            }
+        if price_data[self.ticker] is None:
+            return None
+        return price_data[self.ticker].get(data_field)
 
     # Private Method for Functions needing stock_price_data
     def _stock_summary_data(self, data_field):
         sum_data = self.get_summary_data()
-        if isinstance(self.ticker, str):
-            if sum_data[self.ticker] is None:
-                return None
-            return sum_data[self.ticker].get(data_field, None)
-        else:
-            ret_obj = {}
-            for tick in self.ticker:
-                if sum_data[tick] is None:
-                    ret_obj.update({tick: None})
-                else:
-                    ret_obj.update({tick: sum_data[tick].get(data_field, None)})
-            return ret_obj
+        if not isinstance(self.ticker, str):
+            return {
+                tick: None
+                if sum_data[tick] is None
+                else sum_data[tick].get(data_field, None)
+                for tick in self.ticker
+            }
+        if sum_data[self.ticker] is None:
+            return None
+        return sum_data[self.ticker].get(data_field, None)
 
     # Private Method for Functions needing financial statement data
     def _financial_statement_data(self, stmt_type, stmt_code, field_name, freq):
@@ -210,9 +206,9 @@ class YahooFinancials(YahooFinanceETL):
                         date_key = None
                 if date_key is not None:
                     sub_data = re_data[tick][0][date_key][field_name]
-                    data.update({tick: sub_data})
+                    data[tick] = sub_data
                 else:
-                    data.update({tick: None})
+                    data[tick] = None
         return data
 
     # Public method to get daily dividend data
@@ -350,12 +346,11 @@ class YahooFinancials(YahooFinanceETL):
         pe_ratio = self.get_pe_ratio()
         if isinstance(self.ticker, str):
             return eps(price_data, pe_ratio)
-        else:
-            ret_obj = {}
-            for tick in self.ticker:
-                re_val = eps(price_data[tick], pe_ratio[tick])
-                ret_obj.update({tick: re_val})
-            return ret_obj
+        ret_obj = {}
+        for tick in self.ticker:
+            re_val = eps(price_data[tick], pe_ratio[tick])
+            ret_obj[tick] = re_val
+        return ret_obj
 
     def get_num_shares_outstanding(self, price_type='current'):
         today_low = self._stock_summary_data('dayHigh')
@@ -364,10 +359,9 @@ class YahooFinancials(YahooFinanceETL):
         current = self.get_current_price()
         if isinstance(self.ticker, str):
             return num_shares_outstanding(cur_market_cap, today_low, today_high, price_type, current)
-        else:
-            ret_obj = {}
-            for tick in self.ticker:
-                re_data = num_shares_outstanding(cur_market_cap[tick], today_low[tick],
-                                                 today_high[tick], price_type, current[tick])
-                ret_obj.update({tick: re_data})
-            return ret_obj
+        ret_obj = {}
+        for tick in self.ticker:
+            re_data = num_shares_outstanding(cur_market_cap[tick], today_low[tick],
+                                             today_high[tick], price_type, current[tick])
+            ret_obj[tick] = re_data
+        return ret_obj
