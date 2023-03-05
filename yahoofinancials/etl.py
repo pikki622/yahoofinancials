@@ -44,14 +44,13 @@ class UrlOpener:
         self._session = session or requests
 
     def open(self, url, request_headers=None, params=None, proxy=None, timeout=30):
-        response = self._session.get(
+        return self._session.get(
             url=url,
             params=params,
             proxies=proxy,
             timeout=timeout,
-            headers=request_headers or self.request_headers
+            headers=request_headers or self.request_headers,
         )
-        return response
 
 
 class YahooFinanceETL(object):
@@ -60,7 +59,7 @@ class YahooFinanceETL(object):
         self.ticker = ticker.upper() if isinstance(ticker, str) else [t.upper() for t in ticker]
         self.country = kwargs.get("country", "US")
         if self.country.upper() not in COUNTRY_MAP.keys():
-            raise ReferenceError("invalid country: " + self.country)
+            raise ReferenceError(f"invalid country: {self.country}")
         self.concurrent = kwargs.get("concurrent", False)
         self.max_workers = kwargs.get("max_workers", 8)
         self.timeout = kwargs.get("timeout", 30)
@@ -109,21 +108,25 @@ class YahooFinanceETL(object):
     @staticmethod
     def get_report_type(frequency):
         if frequency == 'annual':
-            report_num = 1
+            return 1
         elif frequency == 'quarterly':
-            report_num = 2
+            return 2
         else:
-            report_num = 3
-        return report_num
+            return 3
 
     # Public static method to format date serial string to readable format and vice versa
     @staticmethod
     def format_date(in_date):
-        if isinstance(in_date, str):
-            form_date = int(calendar.timegm(time.strptime(in_date, '%Y-%m-%d')))
-        else:
-            form_date = str((datetime.datetime(1970, 1, 1) + datetime.timedelta(seconds=in_date)).date())
-        return form_date
+        return (
+            int(calendar.timegm(time.strptime(in_date, '%Y-%m-%d')))
+            if isinstance(in_date, str)
+            else str(
+                (
+                    datetime.datetime(1970, 1, 1)
+                    + datetime.timedelta(seconds=in_date)
+                ).date()
+            )
+        )
 
     # Private Static Method to Convert Eastern Time to UTC
     @staticmethod
@@ -167,15 +170,15 @@ class YahooFinanceETL(object):
                 params.update({k: v})
         if params.get("type"):
             field_params = "%2C".join(params.get("type"))
-            url += "?type=" + field_params
+            url += f"?type={field_params}"
             for k, v in params.items():
                 if k != "type":
-                    url += "&" + k + "=" + str(v)
+                    url += f"&{k}={str(v)}"
         elif params.get("modules"):
             url += "?modules=" + params.get("modules")
             for k, v in params.items():
                 if k != "modules":
-                    url += "&" + k + "=" + str(v)
+                    url += f"&{k}={str(v)}"
         return url
 
     # Private method to execute a web scrape request and decrypt the return
@@ -183,7 +186,7 @@ class YahooFinanceETL(object):
         urlopener = UrlOpener()
         # Try to open the URL up to 10 times sleeping random time if something goes wrong
         max_retry = 10
-        for i in range(0, max_retry):
+        for i in range(max_retry):
             response = urlopener.open(url, proxy=self._get_proxy(), timeout=self.timeout)
             if response.status_code != 200:
                 time.sleep(random.randrange(10, 20))
@@ -195,8 +198,9 @@ class YahooFinanceETL(object):
                 break
             if i == max_retry - 1:
                 # Raise a custom exception if we can't get the web page within max_retry attempts
-                raise ManagedException("Server replied with HTTP " + str(response.status_code) +
-                                       " code while opening the url: " + str(url))
+                raise ManagedException(
+                    f"Server replied with HTTP {str(response.status_code)} code while opening the url: {str(url)}"
+                )
 
     @staticmethod
     def _format_raw_fundamental_data(raw_data):
@@ -213,7 +217,9 @@ class YahooFinanceETL(object):
                         if rec.get("asOfDate") in data:
                             data[rec.get("asOfDate")].update({cleaned_k: rec.get('reportedValue', {}).get('raw')})
                         else:
-                            data.update({rec.get("asOfDate"): {cleaned_k: rec.get('reportedValue', {}).get('raw')}})
+                            data[rec.get("asOfDate")] = {
+                                cleaned_k: rec.get('reportedValue', {}).get('raw')
+                            }
         return data
 
     @staticmethod
@@ -222,7 +228,7 @@ class YahooFinanceETL(object):
         for i in raw_data.get("result", {}):
             if i.get(tech_type):
                 for k, v in i.get(tech_type, {}).items():
-                    data.update({k: v})
+                    data[k] = v
         return data
 
     # Private method to _get_historical_data from yahoo finance
@@ -245,11 +251,7 @@ class YahooFinanceETL(object):
     # Private static method to determine if a numerical value is in the data object being cleaned
     @staticmethod
     def _determine_numeric_value(value_dict):
-        if 'raw' in value_dict.keys():
-            numerical_val = value_dict['raw']
-        else:
-            numerical_val = None
-        return numerical_val
+        return value_dict['raw'] if 'raw' in value_dict.keys() else None
 
     # Private method to format date serial string to readable format and vice versa
     def _format_time(self, in_time):
@@ -267,7 +269,7 @@ class YahooFinanceETL(object):
                 else:
                     numerical_val = self._determine_numeric_value(v)
                     sub_sub_dict_ent = {k: numerical_val}
-                sub_sub_dict.update(sub_sub_dict_ent)
+                sub_sub_dict |= sub_sub_dict_ent
             sub_list.append(sub_sub_dict)
         return {key: sub_list}
 
@@ -277,6 +279,8 @@ class YahooFinanceETL(object):
         earnings_key = 'earningsData'
         financials_key = 'financialsData'
         for k, v in raw_data.items():
+            if k == 'maxAge':
+                continue
             if k == 'earningsChart':
                 sub_dict = {}
                 for k2, v2 in v.items():
@@ -287,20 +291,17 @@ class YahooFinanceETL(object):
                         sub_ent = {k2: numerical_val}
                     else:
                         sub_ent = {k2: v2}
-                    sub_dict.update(sub_ent)
+                    sub_dict |= sub_ent
                 dict_ent = {earnings_key: sub_dict}
-                cleaned_data.update(dict_ent)
             elif k == 'financialsChart':
                 sub_dict = {}
-                for k2, v2, in v.items():
+                for k2, v2 in v.items():
                     sub_ent = self._get_cleaned_sub_dict_ent(k2, v2)
-                    sub_dict.update(sub_ent)
+                    sub_dict |= sub_ent
                 dict_ent = {financials_key: sub_dict}
-                cleaned_data.update(dict_ent)
             else:
-                if k != 'maxAge':
-                    dict_ent = {k: v}
-                    cleaned_data.update(dict_ent)
+                dict_ent = {k: v}
+            cleaned_data |= dict_ent
         return cleaned_data
 
     # Private method to clean summary and price reports
@@ -318,19 +319,18 @@ class YahooFinanceETL(object):
                 except (KeyError, TypeError):
                     formatted_date = '-'
                 dict_ent = {k: formatted_date}
-            elif v is None or isinstance(v, str) or isinstance(v, int) or isinstance(v, float):
+            elif v is None or isinstance(v, (str, int, float)):
                 dict_ent = {k: v}
             else:
                 numerical_val = self._determine_numeric_value(v)
                 dict_ent = {k: numerical_val}
-            cleaned_dict.update(dict_ent)
+            cleaned_dict |= dict_ent
         return cleaned_dict
 
     # Private Static Method to ensure ticker is URL encoded
     @staticmethod
     def _encode_ticker(ticker_str):
-        encoded_ticker = ticker_str.replace('=', '%3D')
-        return encoded_ticker
+        return ticker_str.replace('=', '%3D')
 
     # Private Method to clean the dates of the newly returns historical stock data into readable format
     def _clean_historical_data(self, hist_data, last_attempt=False):
@@ -338,27 +338,24 @@ class YahooFinanceETL(object):
         for k, v in hist_data.items():
             if k == 'eventsData':
                 event_obj = {}
-                if isinstance(v, list):
-                    dict_ent = {k: event_obj}
-                else:
+                if not isinstance(v, list):
                     for type_key, type_obj in v.items():
                         formatted_type_obj = {}
                         for date_key, date_obj in type_obj.items():
                             formatted_date_key = self.format_date(int(date_key))
                             cleaned_date = self.format_date(int(date_obj['date']))
                             date_obj.update({'formatted_date': cleaned_date})
-                            formatted_type_obj.update({formatted_date_key: date_obj})
-                        event_obj.update({type_key: formatted_type_obj})
-                    dict_ent = {k: event_obj}
+                            formatted_type_obj[formatted_date_key] = date_obj
+                        event_obj[type_key] = formatted_type_obj
+                dict_ent = {k: event_obj}
             elif 'date' in k.lower():
                 if v is not None:
                     cleaned_date = self.format_date(v)
                     dict_ent = {k: {'formatted_date': cleaned_date, 'date': v}}
+                elif last_attempt is False:
+                    return None
                 else:
-                    if last_attempt is False:
-                        return None
-                    else:
-                        dict_ent = {k: {'formatted_date': None, 'date': v}}
+                    dict_ent = {k: {'formatted_date': None, 'date': v}}
             elif isinstance(v, list):
                 sub_dict_list = []
                 for sub_dict in v:
@@ -367,7 +364,7 @@ class YahooFinanceETL(object):
                 dict_ent = {k: sub_dict_list}
             else:
                 dict_ent = {k: v}
-            data.update(dict_ent)
+            data |= dict_ent
         return data
 
     # Private Static Method to build API url for GET Request
@@ -377,15 +374,15 @@ class YahooFinanceETL(object):
         event_str = ''
         for idx, s in enumerate(events, start=1):
             if idx < len(events):
-                event_str += s + "|"
+                event_str += f"{s}|"
             elif idx == len(events):
                 event_str += s
-        base_url = "https://query" + v + ".finance.yahoo.com/v8/finance/chart/"
+        base_url = f"https://query{v}.finance.yahoo.com/v8/finance/chart/"
         api_url = base_url + up_ticker + '?symbol=' + up_ticker + '&period1=' + str(hist_obj['start']) + '&period2=' + \
-                  str(hist_obj['end']) + '&interval=' + hist_obj['interval']
+                      str(hist_obj['end']) + '&interval=' + hist_obj['interval']
         country_ent = COUNTRY_MAP.get(self.country.upper())
         meta_str = '&lang=' + country_ent.get("lang", "en-US") + '&region=' + country_ent.get("region", "US")
-        api_url += '&events=' + event_str + meta_str
+        api_url += f'&events={event_str}{meta_str}'
         return api_url
 
     # Private Method to get financial data via API Call
@@ -407,21 +404,19 @@ class YahooFinanceETL(object):
     # Private Method to clean API data
     def _clean_api_data(self, api_url):
         raw_data = self._get_api_data(api_url)
-        ret_obj = {}
-        ret_obj.update({'eventsData': []})
+        ret_obj = {'eventsData': []}
         if raw_data is None:
             return ret_obj
         results = raw_data['chart']['result']
         if results is None:
             return ret_obj
         for result in results:
-            tz_sub_dict = {}
-            ret_obj.update({'eventsData': result.get('events', {})})
-            ret_obj.update({'firstTradeDate': result['meta'].get('firstTradeDate', 'NA')})
-            ret_obj.update({'currency': result['meta'].get('currency', 'NA')})
-            ret_obj.update({'instrumentType': result['meta'].get('instrumentType', 'NA')})
-            tz_sub_dict.update({'gmtOffset': result['meta']['gmtoffset']})
-            ret_obj.update({'timeZone': tz_sub_dict})
+            ret_obj['eventsData'] = result.get('events', {})
+            ret_obj['firstTradeDate'] = result['meta'].get('firstTradeDate', 'NA')
+            ret_obj['currency'] = result['meta'].get('currency', 'NA')
+            ret_obj['instrumentType'] = result['meta'].get('instrumentType', 'NA')
+            tz_sub_dict = {'gmtOffset': result['meta']['gmtoffset']}
+            ret_obj['timeZone'] = tz_sub_dict
             timestamp_list = result['timestamp']
             high_price_list = result['indicators']['quote'][0]['high']
             low_price_list = result['indicators']['quote'][0]['low']
@@ -429,27 +424,24 @@ class YahooFinanceETL(object):
             close_price_list = result['indicators']['quote'][0]['close']
             volume_list = result['indicators']['quote'][0]['volume']
             adj_close_list = result['indicators']['adjclose'][0]['adjclose']
-            i = 0
             prices_list = []
-            for timestamp in timestamp_list:
-                price_dict = {}
-                price_dict.update({'date': timestamp})
-                price_dict.update({'high': high_price_list[i]})
-                price_dict.update({'low': low_price_list[i]})
-                price_dict.update({'open': open_price_list[i]})
-                price_dict.update({'close': close_price_list[i]})
-                price_dict.update({'volume': volume_list[i]})
-                price_dict.update({'adjclose': adj_close_list[i]})
+            for i, timestamp in enumerate(timestamp_list):
+                price_dict = {
+                    'date': timestamp,
+                    'high': high_price_list[i],
+                    'low': low_price_list[i],
+                    'open': open_price_list[i],
+                    'close': close_price_list[i],
+                    'volume': volume_list[i],
+                    'adjclose': adj_close_list[i],
+                }
                 prices_list.append(price_dict)
-                i += 1
-            ret_obj.update({'prices': prices_list})
+            ret_obj['prices'] = prices_list
         return ret_obj
 
     # Private Method to Handle Recursive API Request
     def _recursive_api_request(self, hist_obj, up_ticker, clean=True, i=0):
-        v = "2"
-        if i == 3:  # After 3 tries querying against 'query2.finance.yahoo.com' try 'query1.finance.yahoo.com' instead
-            v = "1"
+        v = "1" if i == 3 else "2"
         if clean:
             re_data = self._clean_api_data(self._build_api_url(hist_obj, up_ticker, v))
             cleaned_re_data = self._clean_historical_data(re_data)
@@ -510,21 +502,18 @@ class YahooFinanceETL(object):
             if key in self.YAHOO_FINANCIAL_TYPES[statement_type.lower()]:
                 stmt_id = key
                 i += 1
-        if i != 1:
-            return None
-        return stmt_id
+        return None if i != 1 else stmt_id
 
     # Private Method for the Reformat Process
     @staticmethod
     def _reformat_stmt_data_process(raw_data):
-        final_data_list = []
-        if raw_data is not None:
-            for date_key, data_item in raw_data.items():
-                dict_item = {date_key: data_item}
-                final_data_list.append(dict_item)
-            return final_data_list
-        else:
+        if raw_data is None:
             return raw_data
+        final_data_list = []
+        for date_key, data_item in raw_data.items():
+            dict_item = {date_key: data_item}
+            final_data_list.append(dict_item)
+        return final_data_list
 
     # Private Method to return subdict entry for the statement reformat process
     def _get_sub_dict_ent(self, ticker, raw_data):
@@ -533,36 +522,33 @@ class YahooFinanceETL(object):
 
     # Public method to get time interval code
     def get_time_code(self, time_interval):
-        interval_code = self._INTERVAL_DICT[time_interval.lower()]
-        return interval_code
+        return self._INTERVAL_DICT[time_interval.lower()]
 
     # Public Method to get stock data
     def get_stock_data(self, statement_type='income', tech_type='', report_name='', hist_obj={}):
         data = {}
         if isinstance(self.ticker, str):
             dict_ent = self._create_dict_ent(self.ticker, statement_type, tech_type, report_name, hist_obj)
-            data.update(dict_ent)
+            data |= dict_ent
+        elif self.concurrent:
+            with Pool(self._get_worker_count()) as pool:
+                dict_ents = pool.map(partial(self._create_dict_ent,
+                                             statement_type=statement_type,
+                                             tech_type=tech_type,
+                                             report_name=report_name,
+                                             hist_obj=hist_obj), self.ticker)
+                for dict_ent in dict_ents:
+                    data.update(dict_ent)
+                pool.close()
+                pool.join()
         else:
-            if self.concurrent:
-                with Pool(self._get_worker_count()) as pool:
-                    dict_ents = pool.map(partial(self._create_dict_ent,
-                                                 statement_type=statement_type,
-                                                 tech_type=tech_type,
-                                                 report_name=report_name,
-                                                 hist_obj=hist_obj), self.ticker)
-                    for dict_ent in dict_ents:
-                        data.update(dict_ent)
-                    pool.close()
-                    pool.join()
-            else:
-                for tick in self.ticker:
-                    try:
-                        dict_ent = self._create_dict_ent(tick, statement_type, tech_type, report_name, hist_obj)
-                        data.update(dict_ent)
-                    except ManagedException:
-                        logging.warning("yahoofinancials ticker: %s error getting %s - %s\n\tContinuing extraction...",
-                                        str(tick), statement_type, str(ManagedException))
-                        continue
+            for tick in self.ticker:
+                try:
+                    dict_ent = self._create_dict_ent(tick, statement_type, tech_type, report_name, hist_obj)
+                    data.update(dict_ent)
+                except ManagedException:
+                    logging.warning("yahoofinancials ticker: %s error getting %s - %s\n\tContinuing extraction...",
+                                    str(tick), statement_type, str(ManagedException))
         return data
 
     # Public Method to get technical stock data
@@ -578,24 +564,21 @@ class YahooFinanceETL(object):
         data_type = raw_data['dataType']
         if isinstance(self.ticker, str):
             sub_dict_ent = self._get_sub_dict_ent(self.ticker, raw_data)
-            sub_dict.update(sub_dict_ent)
-            dict_ent = {data_type: sub_dict}
-            data_dict.update(dict_ent)
+            sub_dict |= sub_dict_ent
+        elif self.concurrent:
+            with Pool(self._get_worker_count()) as pool:
+                sub_dict_ents = pool.map(partial(self._get_sub_dict_ent,
+                                                 raw_data=raw_data), self.ticker)
+                for dict_ent in sub_dict_ents:
+                    sub_dict.update(dict_ent)
+                pool.close()
+                pool.join()
         else:
-            if self.concurrent:
-                with Pool(self._get_worker_count()) as pool:
-                    sub_dict_ents = pool.map(partial(self._get_sub_dict_ent,
-                                                     raw_data=raw_data), self.ticker)
-                    for dict_ent in sub_dict_ents:
-                        sub_dict.update(dict_ent)
-                    pool.close()
-                    pool.join()
-            else:
-                for tick in self.ticker:
-                    sub_dict_ent = self._get_sub_dict_ent(tick, raw_data)
-                    sub_dict.update(sub_dict_ent)
-            dict_ent = {data_type: sub_dict}
-            data_dict.update(dict_ent)
+            for tick in self.ticker:
+                sub_dict_ent = self._get_sub_dict_ent(tick, raw_data)
+                sub_dict.update(sub_dict_ent)
+        dict_ent = {data_type: sub_dict}
+        data_dict |= dict_ent
         return data_dict
 
     # Public method to get cleaned report data
@@ -617,21 +600,20 @@ class YahooFinanceETL(object):
         cleaned_data_dict = {}
         if isinstance(self.ticker, str):
             cleaned_data = self._clean_data_process(self.ticker, report_type, raw_report_data)
-            cleaned_data_dict.update({self.ticker: cleaned_data})
+            cleaned_data_dict[self.ticker] = cleaned_data
+        elif self.concurrent:
+            with Pool(self._get_worker_count()) as pool:
+                cleaned_data_list = pool.map(partial(self._clean_data_process,
+                                                     report_type=report_type,
+                                                     raw_report_data=raw_report_data), self.ticker)
+                for idx, cleaned_data in enumerate(cleaned_data_list):
+                    cleaned_data_dict[self.ticker[idx]] = cleaned_data
+                pool.close()
+                pool.join()
         else:
-            if self.concurrent:
-                with Pool(self._get_worker_count()) as pool:
-                    cleaned_data_list = pool.map(partial(self._clean_data_process,
-                                                         report_type=report_type,
-                                                         raw_report_data=raw_report_data), self.ticker)
-                    for idx, cleaned_data in enumerate(cleaned_data_list):
-                        cleaned_data_dict.update({self.ticker[idx]: cleaned_data})
-                    pool.close()
-                    pool.join()
-            else:
-                for tick in self.ticker:
-                    cleaned_data = self._clean_data_process(tick, report_type, raw_report_data)
-                    cleaned_data_dict.update({tick: cleaned_data})
+            for tick in self.ticker:
+                cleaned_data = self._clean_data_process(tick, report_type, raw_report_data)
+                cleaned_data_dict[tick] = cleaned_data
         return cleaned_data_dict
 
     # Private method to handle dividend data requests
@@ -665,14 +647,14 @@ class YahooFinanceETL(object):
                                                      end=end,
                                                      interval=interval_code), self.ticker)
                     for idx, div_data in enumerate(div_data_list):
-                        re_data.update({self.ticker[idx]: div_data})
+                        re_data[self.ticker[idx]] = div_data
                     pool.close()
                     pool.join()
             else:
                 for tick in self.ticker:
                     try:
                         div_data = self._handle_api_dividend_request(tick, start, end, interval_code)
-                        re_data.update({tick: div_data})
+                        re_data[tick] = div_data
                     except:
-                        re_data.update({tick: None})
+                        re_data[tick] = None
             return re_data
